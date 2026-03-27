@@ -8,7 +8,7 @@ This is an educational project demonstrating a URL shortener system using micros
 - **Read Service**: Handles URL redirection (GET /{shortCode})
 - **Shared Library**: Contains common models, data context, and utilities
 - **Database**: PostgreSQL for persistence
-- **Cache**: Redis for global counter
+- **Cache**: Redis for unique global counter
 
 ## Features
 
@@ -39,7 +39,7 @@ Response:
 ### Read Service (Port 8081)
 
 **GET /{shortCode}**
-- Redirects to the original URL (301 permanent redirect)
+- Redirects to the original URL (302 redirect)
 - Returns 410 Gone if expired or not found
 
 ## Local Development
