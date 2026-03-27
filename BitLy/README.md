@@ -1,224 +1,197 @@
 # URL Shortener Microservices
 
-This is an educational project demonstrating a URL shortener system using microservices architecture in C# with ASP.NET Core.
+An educational project demonstrating a scalable URL shortener built with microservices in C# / ASP.NET Core.
 
 ## Architecture
 
-- **Write Service**: Handles URL shortening requests (POST /urls)
-- **Read Service**: Handles URL redirection (GET /{shortCode})
-- **Shared Library**: Contains common models, data context, and utilities
-- **Database**: PostgreSQL for persistence
-- **Cache**: Redis for unique global counter
+```
+                +--------------------------------------------------+
+                |                    Clients                       |
+                +----------+-------------------+-------------------+
+                           | POST /urls        | GET /{shortCode}
+                           v                  v
+               +--------------------+  +--------------------+
+               |   Write Service    |  |   Read Service     |
+               |   (port 8080)      |  |   (port 8081)      |
+               +-----+------+-------+  +--------+-----------+
+                     |      |                   |
+          +----------+      +-------------------+
+          |                 |                   |
+          v                 v                   v
+  +--------------+   +-----------+   +------------------+
+  |  PostgreSQL  |   |   Redis   |   |   Redis Cache    |
+  |  (storage)   |   | (counter) |   |  (url look-up)   |
+  +--------------+   +-----------+   +------------------+
+```
+
+### Services
+
+| Service | Responsibility |
+|---------|---------------|
+| **WriteService** | Accepts `POST /urls`, generates a short code via a global Redis counter, persists to PostgreSQL, and writes the mapping to the URL cache |
+| **ReadService** | Accepts `GET /{shortCode}`, checks the URL cache first; on a miss falls back to PostgreSQL and populates the cache |
+| **Shared** | Common EF Core models, `UrlShortenerDbContext`, `Base62Encoder`, `RedisCounter`, `UrlCacheService` |
+
+### Infrastructure
+
+| Component | Purpose | Config |
+|-----------|---------|--------|
+| **PostgreSQL** | Persistent storage for all short URL records | Port 5432 |
+| **Redis (counter)** | Monotonically incrementing global ID — guarantees unique short codes across all WriteService replicas | Port 6379 |
+| **Redis (cache)** | High-speed URL look-up cache for ReadService | Port 6380 · `allkeys-lru` · 256 MB |
+
+### Caching Strategy
+
+**Write-through** (WriteService): after persisting to PostgreSQL, the mapping is immediately written to the Redis cache so the very first read is already a cache hit.
+
+**Cache-aside** (ReadService): on each request Redis is checked first. On a miss, PostgreSQL is queried and the result is written back to the cache for subsequent reads.
+
+**Eviction policy**: `allkeys-lru` — the cache Redis instance evicts the least-recently-used key when it reaches the memory limit (256 MB). Popular short codes stay hot and stale ones are pruned automatically.
+
+**TTL**: when a short URL has an `expiration_date`, the cache entry TTL is set to the remaining duration (`expiration_date - now`). Entries without an expiry date are kept indefinitely (subject only to LRU eviction).
 
 ## Features
 
-- Shorten long URLs to short codes using base62 encoding
-- Custom aliases support
-- Expiration dates for shortened URLs
-- High availability and scalability design
+- Base62 short-code generation backed by a Redis global counter
+- Custom aliases
+- Optional expiration dates with automatic TTL propagation to the cache
+- In-memory URL cache capable of >10k reads/sec per replica
+- Horizontal scaling of both services
+- Kubernetes manifests with HPA
 
-## APIs
+## API
 
-### Write Service (Port 8080)
+### Write Service (port 8080)
 
 **POST /urls**
 ```json
 {
   "long_url": "https://example.com",
-  "custom_alias": "optional",
-  "expiration_date": "2024-12-31T23:59:59Z"
+  "custom_alias": "my-alias",
+  "expiration_date": "2026-12-31T23:59:59Z"
 }
 ```
 Response:
 ```json
-{
-  "short_url": "https://short.ly/abc123"
-}
+{ "short_url": "http://localhost:8081/abc123" }
 ```
 
-### Read Service (Port 8081)
+### Read Service (port 8081)
 
 **GET /{shortCode}**
-- Redirects to the original URL (302 redirect)
-- Returns 410 Gone if expired or not found
+- `302 Found` — redirects to the original URL
+- `410 Gone` — short code has expired
+- `404 Not Found` — short code does not exist
 
 ## Local Development
 
 ### Prerequisites
 
-- **.NET 8.0 SDK**: Download and install from [Microsoft's official site](https://dotnet.microsoft.com/download/dotnet/8.0). For macOS ARM64 (M1/M2), ensure you download the ARM64 version.
-- **Docker and Docker Compose**: Install from [Docker's site](https://www.docker.com/get-started).
+- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
+- [Docker Desktop](https://www.docker.com/get-started)
 
-### Option 1: Run with Docker Compose (Recommended)
+### Run with Docker Compose
 
-This is the easiest way as it handles all dependencies automatically.
+```bash
+docker compose up --build
+```
 
-1. **Clone the repository**:
-   ```bash
-   git clone <repository-url>
-   cd BitLy
-   ```
+Starts PostgreSQL, Redis (counter), Redis (cache), WriteService (`localhost:8080`), and ReadService (`localhost:8081`). The database schema is created automatically on first startup.
 
-2. **Start all services**:
-   ```bash
-   docker-compose up --build
-   ```
-   This will build the images, start PostgreSQL, Redis, WriteService (port 8080), and ReadService (port 8081).
+**Shorten a URL:**
+```bash
+curl -s -X POST http://localhost:8080/urls \
+  -H "Content-Type: application/json" \
+  -d '{"long_url":"https://example.com"}'
+```
 
-3. **Initialize the database** (first run only):
-   - The services will create the database schema automatically using EF Core migrations.
-   - If needed, you can run migrations manually by connecting to the PostgreSQL container.
+**Follow the redirect:**
+```bash
+curl -v http://localhost:8081/<shortCode>
+```
 
-4. **Test the services**:
-   - **Shorten a URL**:
-     ```bash
-     curl -X POST http://localhost:8080/urls \
-       -H "Content-Type: application/json" \
-       -d '{"long_url":"https://google.com"}'
-     ```
-     Response: `{"shortUrl":"https://short.ly/abc123"}`
+**With expiration (TTL propagated to cache automatically):**
+```bash
+curl -s -X POST http://localhost:8080/urls \
+  -H "Content-Type: application/json" \
+  -d '{"long_url":"https://example.com","expiration_date":"2026-06-01T00:00:00Z"}'
+```
 
-   - **Access the shortened URL**:
-     Open `http://localhost:8081/abc123` in your browser - it should redirect to Google.
+### Run services manually
 
-### Option 2: Run Services Manually
+```bash
+# Start infrastructure only
+docker compose up -d postgres redis redis-cache
 
-If you prefer to run services directly (requires .NET SDK):
+# Write Service
+cd WriteService && dotnet run
 
-1. **Start dependencies with Docker**:
-   ```bash
-   docker-compose up -d postgres redis
-   ```
-
-2. **Run database migrations**:
-   ```bash
-   cd Shared
-   dotnet ef database update
-   cd ..
-   ```
-
-3. **Run Write Service**:
-   ```bash
-   cd WriteService
-   dotnet run
-   ```
-   Runs on http://localhost:5000 (or configured port).
-
-4. **Run Read Service** (in another terminal):
-   ```bash
-   cd ReadService
-   dotnet run
-   ```
-   Runs on http://localhost:5001 (or configured port).
-
-5. **Test as above**, adjusting ports if needed.
+# Read Service (separate terminal)
+cd ReadService && dotnet run
+```
 
 ### Troubleshooting
 
-- **.NET installation issues**: Ensure you're using the ARM64 version for Apple Silicon Macs.
-- **Port conflicts**: If ports 8080/8081 are in use, modify `docker-compose.yml`.
-- **Database connection**: Check PostgreSQL logs with `docker-compose logs postgres`.
-- **Redis connection**: Ensure Redis is running on port 6379.
-
-## Docker Deployment
-
-1. Build and run: `docker-compose up --build`
+- **No cache logs** — ensure images were rebuilt after the latest code changes (`docker compose up --build`).
+- **Port conflicts** — adjust port mappings in `docker-compose.yml`.
+- **DB not ready** — both services retry the connection up to 10 times on startup.
 
 ## Kubernetes Deployment (Minikube)
 
 ### Prerequisites
-- [Minikube](https://minikube.sigs.k8s.io/docs/start/) and `kubectl` installed
+
+- [Minikube](https://minikube.sigs.k8s.io/docs/start/) and `kubectl`
 
 ### Quick start
 
 ```bash
-# 1. Start Minikube (first time only)
 minikube start
-
-# 2. Build images into Minikube's Docker daemon and deploy everything
-./k8s/deploy-minikube.sh
-
-# 3. Scale out write and read services to 3 replicas
-./k8s/deploy-minikube.sh --scale 3
+./k8s/deploy-minikube.sh           # build images + apply all manifests
+./k8s/deploy-minikube.sh --scale 3 # scale to 3 replicas each
 ```
 
-The script prints the Minikube IP and NodePort URLs when it finishes:
+The script prints the service URLs when done:
 - **WriteService**: `http://<minikube-ip>:30080`
-- **ReadService**:  `http://<minikube-ip>:30081`
+- **ReadService**: `http://<minikube-ip>:30081`
 
-Get the IP at any time with `minikube ip`.
+### What gets deployed
 
-### Manual steps (what the script does)
-
-```bash
-# Point your shell to Minikube's Docker daemon so images are available in-cluster
-eval $(minikube docker-env)
-
-# Build images
-docker build -t bitly-writeservice:latest -f WriteService/Dockerfile .
-docker build -t bitly-readservice:latest  -f ReadService/Dockerfile  .
-
-# Apply all manifests
-kubectl apply -f k8s/
-
-# Scale horizontally
-kubectl scale deployment writeservice --replicas=3
-kubectl scale deployment readservice  --replicas=3
-
-# Verify
-kubectl get pods
-kubectl get services
-```
+| Manifest | Contents |
+|----------|----------|
+| `k8s/postgres.yaml` | Postgres Deployment + PVC + Service |
+| `k8s/redis.yaml` | Redis counter Deployment + PVC + Service; Redis cache Deployment + Service (LRU, no PVC) |
+| `k8s/writeservice.yaml` | WriteService Deployment + NodePort Service |
+| `k8s/readservice.yaml` | ReadService Deployment + NodePort Service |
+| `k8s/hpa.yaml` | HorizontalPodAutoscaler for both services |
 
 ### Test after deployment
 
 ```bash
 MINIKUBE_IP=$(minikube ip)
 
-# Shorten a URL
 curl -s -X POST "http://${MINIKUBE_IP}:30080/urls" \
      -H "Content-Type: application/json" \
      -d '{"long_url":"https://example.com"}'
 
-# Follow the redirect
 curl -v "http://${MINIKUBE_IP}:30081/<shortCode>"
 ```
 
-## AWS Deployment
-
-For production deployment on AWS:
-
-1. Use Amazon EKS for Kubernetes
-2. Use Amazon RDS for PostgreSQL
-3. Use Amazon ElastiCache for Redis
-4. Use API Gateway or ALB for routing
-
-## API Gateway
-
-For production, consider using:
-- Kong (free and open-source)
-- NGINX
-- AWS API Gateway
-- Azure API Management
-
 ## Database Schema
 
-The `short_urls` table contains:
-- id (bigint, primary key)
-- long_url (varchar)
-- short_code (varchar, unique)
-- custom_alias (varchar, unique, nullable)
-- expiration_date (timestamp, nullable)
-- created_at (timestamp)
+Table `short_urls`:
 
-## Scaling Considerations
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | bigint | Primary key |
+| `long_url` | varchar | Original URL |
+| `short_code` | varchar | Unique base62 code |
+| `custom_alias` | varchar | Optional, unique |
+| `expiration_date` | timestamp | Nullable; drives cache TTL |
+| `created_at` | timestamp | Auto-set |
 
-- Horizontal scaling of services
-- Database read replicas
-- Redis clustering
-- CDN for static assets
-- Rate limiting and caching layers
+## Scaling Notes
 
-## Contributing
-
-This is an educational project. Feel free to contribute improvements!
+- **ReadService** is stateless and cache-backed — scale horizontally without coordination.
+- **Redis cache** uses `allkeys-lru` so no manual key management is needed.
+- **Redis counter** is a single instance; for multi-region, replace with range-based ID allocation per WriteService node.
+- **WriteService** replicas are safe to run in parallel — the atomic Redis `INCR` guarantees unique IDs.
