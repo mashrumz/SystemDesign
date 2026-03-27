@@ -13,12 +13,18 @@ public class UrlsController : ControllerBase
 {
     private readonly UrlShortenerDbContext _db;
     private readonly RedisCounter _counter;
+    private readonly UrlCacheService _cache;
     private readonly ILogger<UrlsController> _logger;
 
-    public UrlsController(UrlShortenerDbContext db, RedisCounter counter, ILogger<UrlsController> logger)
+    public UrlsController(
+        UrlShortenerDbContext db,
+        RedisCounter counter,
+        UrlCacheService cache,
+        ILogger<UrlsController> logger)
     {
         _db = db;
         _counter = counter;
+        _cache = cache;
         _logger = logger;
     }
 
@@ -54,6 +60,9 @@ public class UrlsController : ControllerBase
 
         _db.ShortUrls.Add(shortUrl);
         await _db.SaveChangesAsync();
+
+        // Write-through: populate the cache immediately so the first read is a cache hit.
+        await _cache.SetAsync(shortCode, request.LongUrl, request.ExpirationDate);
 
         // Build URL dynamically to avoid manual environment setup for BASE_URL.
         // If the service is behind TLS terminator or proxy, use X-Forwarded-* headers.

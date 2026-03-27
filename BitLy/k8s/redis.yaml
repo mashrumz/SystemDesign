@@ -46,3 +46,41 @@ spec:
     app: redis
   ports:
     - port: 6379
+---
+# URL look-up cache Redis — separate from the global counter instance.
+# LRU eviction: allkeys-lru, 256 MB limit. No persistence needed (cache is rebuildable).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-cache
+  template:
+    metadata:
+      labels:
+        app: redis-cache
+    spec:
+      containers:
+      - name: redis-cache
+        image: redis:7
+        args:
+          - "redis-server"
+          - "--maxmemory"
+          - "256mb"
+          - "--maxmemory-policy"
+          - "allkeys-lru"
+        ports:
+        - containerPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cache
+spec:
+  selector:
+    app: redis-cache
+  ports:
+    - port: 6379

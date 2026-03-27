@@ -32,6 +32,8 @@ spec:
           value: "false"
         - name: ConnectionStrings__DefaultConnection
           value: Host=postgres;Database=urlshortener;Username=postgres;Password=password
+        - name: Redis__CacheConnectionString
+          value: redis-cache:6379
 ---
 apiVersion: v1
 kind: Service

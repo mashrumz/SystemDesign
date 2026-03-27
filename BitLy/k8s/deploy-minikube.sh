@@ -35,6 +35,9 @@ kubectl rollout status deployment/postgres --timeout=120s
 echo "==> Waiting for redis to be ready..."
 kubectl rollout status deployment/redis --timeout=60s
 
+echo "==> Waiting for redis-cache to be ready..."
+kubectl rollout status deployment/redis-cache --timeout=60s
+
 echo "==> Waiting for writeservice to be ready..."
 kubectl rollout status deployment/writeservice --timeout=120s
 

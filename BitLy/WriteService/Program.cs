@@ -9,8 +9,15 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 builder.Services.AddDbContext<UrlShortenerDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
-builder.Services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(builder.Configuration["Redis:ConnectionString"] ?? "localhost:6379"));
+
+// Two separate Redis instances: "counter" for global ID generation, "cache" for URL look-up cache.
+builder.Services.AddKeyedSingleton<IConnectionMultiplexer>("counter",
+    ConnectionMultiplexer.Connect(builder.Configuration["Redis:CounterConnectionString"] ?? "localhost:6379"));
+builder.Services.AddKeyedSingleton<IConnectionMultiplexer>("cache",
+    ConnectionMultiplexer.Connect(builder.Configuration["Redis:CacheConnectionString"] ?? "localhost:6380"));
+
 builder.Services.AddScoped<RedisCounter>();
+builder.Services.AddScoped<UrlCacheService>();
 
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();

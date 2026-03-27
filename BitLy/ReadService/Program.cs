@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Shared.Data;
+using Shared.Utils;
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -7,6 +9,11 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 builder.Services.AddDbContext<UrlShortenerDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// URL look-up cache Redis instance (separate from the write-service counter Redis).
+builder.Services.AddKeyedSingleton<IConnectionMultiplexer>("cache",
+    ConnectionMultiplexer.Connect(builder.Configuration["Redis:CacheConnectionString"] ?? "localhost:6380"));
+builder.Services.AddScoped<UrlCacheService>();
 
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();

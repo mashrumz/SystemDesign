@@ -20,6 +20,13 @@ services:
     ports:
       - "6379:6379"
 
+  redis-cache:
+    image: redis:7
+    # allkeys-lru: evict least-recently-used keys when memory limit is reached.
+    command: [ "redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru" ]
+    ports:
+      - "6380:6379"
+
   writeservice:
     build:
       context: .
@@ -31,10 +38,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      redis-cache:
+        condition: service_started
     environment:
       - ASPNETCORE_URLS=http://+:80
       - ConnectionStrings__DefaultConnection=Host=postgres;Database=urlshortener;Username=postgres;Password=password
-      - Redis__ConnectionString=redis:6379
+      - Redis__CounterConnectionString=redis:6379
+      - Redis__CacheConnectionString=redis-cache:6379
       - BASE_URL=http://localhost:8081
       - USE_HTTPS_REDIRECT=false
 
@@ -47,9 +57,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis-cache:
+        condition: service_started
     environment:
       - ASPNETCORE_URLS=http://+:80
       - ConnectionStrings__DefaultConnection=Host=postgres;Database=urlshortener;Username=postgres;Password=password
+      - Redis__CacheConnectionString=redis-cache:6379
       - USE_HTTPS_REDIRECT=false
 
 volumes:
