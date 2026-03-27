@@ -1,0 +1,56 @@
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: urlshortener
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  writeservice:
+    build:
+      context: .
+      dockerfile: WriteService/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      - ASPNETCORE_URLS=http://+:80
+      - ConnectionStrings__DefaultConnection=Host=postgres;Database=urlshortener;Username=postgres;Password=password
+      - Redis__ConnectionString=redis:6379
+      - BASE_URL=http://localhost:8081
+      - USE_HTTPS_REDIRECT=false
+
+  readservice:
+    build:
+      context: .
+      dockerfile: ReadService/Dockerfile
+    ports:
+      - "8081:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - ASPNETCORE_URLS=http://+:80
+      - ConnectionStrings__DefaultConnection=Host=postgres;Database=urlshortener;Username=postgres;Password=password
+      - USE_HTTPS_REDIRECT=false
+
+volumes:
+  postgres_data:

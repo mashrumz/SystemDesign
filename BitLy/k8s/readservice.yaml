@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: readservice
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: readservice
+  template:
+    metadata:
+      labels:
+        app: readservice
+    spec:
+      containers:
+      - name: readservice
+        image: bitly-readservice:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        env:
+        - name: ASPNETCORE_URLS
+          value: http://+:80
+        - name: USE_HTTPS_REDIRECT
+          value: "false"
+        - name: ConnectionStrings__DefaultConnection
+          value: Host=postgres;Database=urlshortener;Username=postgres;Password=password
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: readservice
+spec:
+  selector:
+    app: readservice
+  type: NodePort
+  ports:
+    - port: 80
+      targetPort: 80
+      nodePort: 30081

@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: writeservice
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: writeservice
+  template:
+    metadata:
+      labels:
+        app: writeservice
+    spec:
+      containers:
+      - name: writeservice
+        image: bitly-writeservice:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        env:
+        - name: ASPNETCORE_URLS
+          value: http://+:80
+        - name: USE_HTTPS_REDIRECT
+          value: "false"
+        - name: ConnectionStrings__DefaultConnection
+          value: Host=postgres;Database=urlshortener;Username=postgres;Password=password
+        - name: Redis__ConnectionString
+          value: redis:6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: writeservice
+spec:
+  selector:
+    app: writeservice
+  type: NodePort
+  ports:
+    - port: 80
+      targetPort: 80
+      nodePort: 30080
