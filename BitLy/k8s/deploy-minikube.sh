@@ -22,32 +22,31 @@ docker build -t bitly-writeservice:latest -f WriteService/Dockerfile .
 echo "==> Building ReadService image..."
 docker build -t bitly-readservice:latest -f ReadService/Dockerfile .
 
-echo "==> Applying Kubernetes manifests..."
-kubectl apply -f k8s/postgres.yaml
-kubectl apply -f k8s/redis.yaml
-kubectl apply -f k8s/writeservice.yaml
-kubectl apply -f k8s/readservice.yaml
-kubectl apply -f k8s/hpa.yaml
+echo "==> Creating namespace bitly (idempotent)..."
+kubectl create namespace bitly --dry-run=client -o yaml | kubectl apply -f -
+
+echo "==> Applying Kubernetes manifests (local overlay)..."
+kubectl apply -k k8s/overlays/local/
 
 echo "==> Waiting for postgres to be ready..."
-kubectl rollout status deployment/postgres --timeout=120s
+kubectl rollout status deployment/postgres -n bitly --timeout=120s
 
 echo "==> Waiting for redis to be ready..."
-kubectl rollout status deployment/redis --timeout=60s
+kubectl rollout status deployment/redis -n bitly --timeout=60s
 
 echo "==> Waiting for redis-cache to be ready..."
-kubectl rollout status deployment/redis-cache --timeout=60s
+kubectl rollout status deployment/redis-cache -n bitly --timeout=60s
 
 echo "==> Waiting for writeservice to be ready..."
-kubectl rollout status deployment/writeservice --timeout=120s
+kubectl rollout status deployment/writeservice -n bitly --timeout=120s
 
 echo "==> Waiting for readservice to be ready..."
-kubectl rollout status deployment/readservice --timeout=120s
+kubectl rollout status deployment/readservice -n bitly --timeout=120s
 
 if [[ "$REPLICAS" -gt 1 ]]; then
   echo "==> Scaling to $REPLICAS replicas..."
-  kubectl scale deployment writeservice --replicas="$REPLICAS"
-  kubectl scale deployment readservice  --replicas="$REPLICAS"
+  kubectl scale deployment writeservice -n bitly --replicas="$REPLICAS"
+  kubectl scale deployment readservice  -n bitly --replicas="$REPLICAS"
 fi
 
 echo ""

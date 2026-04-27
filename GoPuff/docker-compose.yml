@@ -1,0 +1,88 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: gopuff
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # FC Cache — stores full list of Fulfilment Centres (lat/lon).
+  # NearbyService loads all FCs into this cache; Haversine is applied in-memory.
+  redis-fc:
+    image: redis:7
+    command: [ "redis-server", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru" ]
+    ports:
+      - "6379:6379"
+
+  # Inventory Cache — per-(itemId, fcId) quantity cache, TTL 30 s app-side.
+  redis-inv:
+    image: redis:7
+    command: [ "redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru" ]
+    ports:
+      - "6380:6379"
+
+  nearbyservice:
+    build:
+      context: .
+      dockerfile: NearbyService/Dockerfile
+    ports:
+      - "8082:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-fc:
+        condition: service_started
+    environment:
+      ASPNETCORE_URLS: "http://+:80"
+      ConnectionStrings__DefaultConnection: "Host=postgres;Database=gopuff;Username=postgres;Password=password"
+      Redis__FcCacheConnectionString: "redis-fc:6379"
+
+  availabilityservice:
+    build:
+      context: .
+      dockerfile: AvailabilityService/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-inv:
+        condition: service_started
+      nearbyservice:
+        condition: service_started
+    environment:
+      ASPNETCORE_URLS: "http://+:80"
+      ConnectionStrings__DefaultConnection: "Host=postgres;Database=gopuff;Username=postgres;Password=password"
+      Redis__InvCacheConnectionString: "redis-inv:6379"
+      Services__NearbyServiceUrl: "http://nearbyservice:80"
+
+  orderservice:
+    build:
+      context: .
+      dockerfile: OrderService/Dockerfile
+    ports:
+      - "8081:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-inv:
+        condition: service_started
+      nearbyservice:
+        condition: service_started
+    environment:
+      ASPNETCORE_URLS: "http://+:80"
+      ConnectionStrings__DefaultConnection: "Host=postgres;Database=gopuff;Username=postgres;Password=password"
+      Redis__InvCacheConnectionString: "redis-inv:6379"
+      Services__NearbyServiceUrl: "http://nearbyservice:80"
+
+volumes:
+  postgres_data:

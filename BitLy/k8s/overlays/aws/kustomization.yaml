@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - name: bitly-writeservice
+    newName: 396633055518.dkr.ecr.eu-north-1.amazonaws.com/bitly/writeservice
+    newTag: latest
+  - name: bitly-readservice
+    newName: 396633055518.dkr.ecr.eu-north-1.amazonaws.com/bitly/readservice
+    newTag: latest
+patches:
+  - path: writeservice-patch.yaml
+  - path: readservice-patch.yaml

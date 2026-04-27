@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orderservice
+  namespace: gopuff
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: orderservice
+  template:
+    metadata:
+      labels:
+        app: orderservice
+    spec:
+      containers:
+      - name: orderservice
+        image: gopuff-orderservice:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: 150m
+            memory: 128Mi
+          limits:
+            cpu: 750m
+            memory: 256Mi
+        env:
+        - name: ASPNETCORE_URLS
+          value: "http://+:80"
+        - name: ConnectionStrings__DefaultConnection
+          value: "Host=postgres;Database=gopuff;Username=postgres;Password=password"
+        - name: Redis__InvCacheConnectionString
+          value: "redis-inv:6379"
+        - name: Services__NearbyServiceUrl
+          value: "http://nearbyservice:80"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orderservice
+  namespace: gopuff
+spec:
+  selector:
+    app: orderservice
+  type: NodePort
+  ports:
+    - port: 80
+      targetPort: 80
+      nodePort: 30181

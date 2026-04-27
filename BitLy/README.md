@@ -136,17 +136,25 @@ cd ReadService && dotnet run
 - **Port conflicts** — adjust port mappings in `docker-compose.yml`.
 - **DB not ready** — both services retry the connection up to 10 times on startup.
 
-## Kubernetes Deployment (Minikube)
+## Kubernetes Deployment
 
-### Prerequisites
+The manifests use **Kustomize** to share a common base with environment-specific overlays:
 
-- [Minikube](https://minikube.sigs.k8s.io/docs/start/) and `kubectl`
+```
+k8s/
+  base/                    # shared: Deployments, Services, HPA
+  overlays/
+    local/                 # Minikube: NodePort, imagePullPolicy:Never, hardcoded env, Postgres+Redis pods
+    aws/                   # AWS EKS: LoadBalancer, imagePullPolicy:Always, ECR images, secretKeyRef
+```
 
-### Quick start
+### Local (Minikube)
+
+**Prerequisites:** [Minikube](https://minikube.sigs.k8s.io/docs/start/) and `kubectl`
 
 ```bash
 minikube start
-./k8s/deploy-minikube.sh           # build images + apply all manifests
+./k8s/deploy-minikube.sh           # build images + apply local overlay
 ./k8s/deploy-minikube.sh --scale 3 # scale to 3 replicas each
 ```
 
@@ -154,18 +162,7 @@ The script prints the service URLs when done:
 - **WriteService**: `http://<minikube-ip>:30080`
 - **ReadService**: `http://<minikube-ip>:30081`
 
-### What gets deployed
-
-| Manifest | Contents |
-|----------|----------|
-| `k8s/postgres.yaml` | Postgres Deployment + PVC + Service |
-| `k8s/redis.yaml` | Redis counter Deployment + PVC + Service; Redis cache Deployment + Service (LRU, no PVC) |
-| `k8s/writeservice.yaml` | WriteService Deployment + NodePort Service |
-| `k8s/readservice.yaml` | ReadService Deployment + NodePort Service |
-| `k8s/hpa.yaml` | HorizontalPodAutoscaler for both services |
-
-### Test after deployment
-
+**Test after deployment:**
 ```bash
 MINIKUBE_IP=$(minikube ip)
 
@@ -174,6 +171,86 @@ curl -s -X POST "http://${MINIKUBE_IP}:30080/urls" \
      -d '{"long_url":"https://example.com"}'
 
 curl -v "http://${MINIKUBE_IP}:30081/<shortCode>"
+```
+
+### AWS (EKS)
+
+**Prerequisites:** `awscli`, `eksctl`, `kubectl`, `helm`, `docker`
+
+Infra used on AWS:
+
+| Component | AWS Service |
+|-----------|-------------|
+| Postgres | Amazon RDS (PostgreSQL 15) |
+| Redis counter + cache | Amazon ElastiCache (Redis 7) |
+| Container images | Amazon ECR |
+| Kubernetes cluster | Amazon EKS |
+| Service exposure | AWS Load Balancer (ALB) |
+
+**One-time cluster setup** (only needed once):
+
+```bash
+# Create EKS cluster
+eksctl create cluster --name bitly-cluster --region eu-north-1 \
+  --nodegroup-name standard-workers --node-type t3.small \
+  --nodes 2 --nodes-min 2 --nodes-max 6 --managed
+
+# Create ECR repositories
+aws ecr create-repository --repository-name bitly/writeservice
+aws ecr create-repository --repository-name bitly/readservice
+
+# Create RDS and ElastiCache (see full setup guide for commands)
+# Then store credentials as a Kubernetes Secret:
+kubectl create namespace bitly
+kubectl create secret generic bitly-secrets -n bitly \
+  --from-literal=postgres-connection="Host=<RDS_ENDPOINT>;Database=urlshortener;Username=postgres;Password=<PASSWORD>" \
+  --from-literal=redis-counter-connection="<COUNTER_REDIS_ENDPOINT>:6379" \
+  --from-literal=redis-cache-connection="<CACHE_REDIS_ENDPOINT>:6379"
+
+# Install the AWS Load Balancer Controller
+eksctl utils associate-iam-oidc-provider --region eu-north-1 --cluster bitly-cluster --approve
+
+aws iam create-policy \
+  --policy-name AWSLoadBalancerControllerIAMPolicy \
+  --policy-document file://iam_policy.json
+
+eksctl create iamserviceaccount \
+  --cluster bitly-cluster \
+  --namespace kube-system \
+  --name aws-load-balancer-controller \
+  --attach-policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/AWSLoadBalancerControllerIAMPolicy \
+  --override-existing-serviceaccounts \
+  --approve
+
+helm repo add eks https://aws.github.io/eks-charts
+helm repo update
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+  -n kube-system \
+  --set clusterName=bitly-cluster \
+  --set serviceAccount.create=false \
+  --set serviceAccount.name=aws-load-balancer-controller
+
+# Install Metrics Server (required for HPA)
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+# Fix: the default metrics-server manifest is missing the k8s-app label required by
+# its Service selector. Patch the Deployment to add it, then wait for rollout:
+kubectl patch deployment metrics-server -n kube-system --type='json' \
+  -p='[{"op":"add","path":"/spec/template/metadata/labels/k8s-app","value":"metrics-server"}]'
+kubectl rollout status deployment/metrics-server -n kube-system
+```
+
+**Deploy / redeploy** (run from `BitLy/` root):
+
+```bash
+export AWS_REGION=eu-north-1
+./k8s/overlays/aws/deploy-aws.sh
+```
+
+The script builds and pushes images to ECR, then applies the AWS overlay. Get the public Load Balancer URLs (~2 min to provision):
+
+```bash
+kubectl get svc -n bitly
 ```
 
 ## Database Schema

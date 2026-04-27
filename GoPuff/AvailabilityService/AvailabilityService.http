@@ -1,0 +1,6 @@
+@AvailabilityService_HostAddress = http://localhost:5118
+
+GET {{AvailabilityService_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

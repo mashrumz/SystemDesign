@@ -1,0 +1,69 @@
+# redis-fc: FC cache — stores full list of FCs for in-memory Haversine lookups.
+# LRU eviction, 64 MB cap. TTL managed app-side (5 min).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-fc
+  namespace: gopuff
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-fc
+  template:
+    metadata:
+      labels:
+        app: redis-fc
+    spec:
+      containers:
+      - name: redis-fc
+        image: redis:7
+        args: ["redis-server", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+        ports:
+        - containerPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-fc
+  namespace: gopuff
+spec:
+  selector:
+    app: redis-fc
+  ports:
+    - port: 6379
+---
+# redis-inv: Inventory cache — per-(itemId, fcId) quantity counts.
+# LRU eviction, 128 MB cap. TTL managed app-side (30 s).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-inv
+  namespace: gopuff
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-inv
+  template:
+    metadata:
+      labels:
+        app: redis-inv
+    spec:
+      containers:
+      - name: redis-inv
+        image: redis:7
+        args: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+        ports:
+        - containerPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-inv
+  namespace: gopuff
+spec:
+  selector:
+    app: redis-inv
+  ports:
+    - port: 6379

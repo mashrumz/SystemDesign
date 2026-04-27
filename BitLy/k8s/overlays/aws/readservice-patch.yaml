@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: readservice
+  namespace: bitly
+spec:
+  template:
+    spec:
+      containers:
+      - name: readservice
+        imagePullPolicy: Always
+        env:
+        - name: ConnectionStrings__DefaultConnection
+          valueFrom:
+            secretKeyRef:
+              name: bitly-secrets
+              key: postgres-connection
+        - name: Redis__CacheConnectionString
+          valueFrom:
+            secretKeyRef:
+              name: bitly-secrets
+              key: redis-cache-connection
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: readservice
+  namespace: bitly
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+      targetPort: 80

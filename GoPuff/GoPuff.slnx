@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="AvailabilityService/AvailabilityService.csproj" />
+  <Project Path="NearbyService/NearbyService.csproj" />
+  <Project Path="OrderService/OrderService.csproj" />
+  <Project Path="Shared/Shared.csproj" />
+</Solution>
